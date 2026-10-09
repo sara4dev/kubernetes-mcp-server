@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc/oidctest"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/containers/kubernetes-mcp-server/internal/test"
 	"github.com/containers/kubernetes-mcp-server/pkg/config"
@@ -64,6 +65,26 @@ func (s *ImpersonationMCPSuite) connect(user string, groups ...string) (*mcp.Cli
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = session.Close() })
 	return session, transport
+}
+
+func (s *ImpersonationMCPSuite) TestExplicitConfigurationViewExcludesBackendCredentials() {
+	s.Config.EnabledTools.SetForTest([]string{"configuration_view"})
+	s.StartServer()
+	session, _ := s.connect("alice", "readers")
+	for _, minified := range []bool{true, false} {
+		s.Run(fmt.Sprintf("minified=%v", minified), func() {
+			result, err := session.CallTool(s.T().Context(), &mcp.CallToolParams{
+				Name: "configuration_view", Arguments: map[string]any{"minified": minified},
+			})
+			s.Require().NoError(err)
+			text := result.Content[0].(*mcp.TextContent).Text
+			s.Require().False(result.IsError, text)
+			kubeconfig, err := clientcmd.Load([]byte(text))
+			s.Require().NoError(err)
+			s.Empty(kubeconfig.AuthInfos)
+			s.NotContains(text, "backend-credential")
+		})
+	}
 }
 
 func (s *ImpersonationMCPSuite) TestCurrentIdentityAndConcurrentUsers() {
